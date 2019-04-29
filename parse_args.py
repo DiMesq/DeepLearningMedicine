@@ -8,6 +8,7 @@ def parse_args():
 
     parser_train = subparsers.add_parser('train', help='a help')
     parser_train.add_argument('--model-name', '-m', dest='model_name', required=True, help='Model name (for loading custom model or for transfer learning)')
+    parser_train.add_argument('--continue-training', '-C', dest='continue_training', help='Run id of the model to continue')
     parser_train.add_argument('--num-epochs', '-E', dest='num_epochs', default=100, help='Model name (for loading custom model or for transfer learning)')
     parser_train.add_argument('--max-stale', '-S', dest='max_stale', default=10, type=int, help='Early stopping: number of epochs without improvement before stopping')
     parser_train.add_argument('--local', action='store_true', help='if running locally')

@@ -24,6 +24,8 @@ def initialize_resnet(model_name):
         model_fn = models.resnet18
     elif model_name == 'resnet50':
         model_fn = models.resnet50
+    elif model_name == 'resnet101':
+        model_fn = models.resnet101
     elif model_name == 'resnet152':
         model_fn = models.resnet152
 
@@ -35,10 +37,28 @@ def initialize_resnet(model_name):
     return model, input_size
 
 
+def initialize_densenet(model_name):
+    if model_name == 'densenet121':
+        model_fn = models.densenet121
+    elif model_name == 'densenet161':
+        model_fn = models.densenet161
+    elif model_name == 'densenet201':
+        model_fn = models.densenet201
+
+    model = model_fn(pretrained=True)
+    in_feats = model.classifier.in_features
+    model.classifier = nn.Linear(in_feats, NUM_CLASSES)
+    input_size = 224
+
+    return model, input_size
+
+
 def initialize_model(model_name):
     logging.info(f'Initializing pretrained {model_name} model...')
     if 'resnet' in model_name:
         model, input_size = initialize_resnet(model_name)
+    if 'densenet' in model_name:
+        model, input_size = initialize_densenet(model_name)
     return model, input_size
 
 
@@ -169,13 +189,7 @@ def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path,
 
                     running_loss += loss
                     y_predicted_probs_batch, y_predicted_batch = out.max(1)
-                    # todo
-                    print(y_predicted_batch)
-                    print(y)
-                    print(torch.eq(y_predicted_batch, y).sum())
                     running_correct += torch.eq(y_predicted_batch, y).sum()
-                    print(running_correct)
-                    print('---------')
 
                     if phase == 'val':
                         y_true.extend(y.cpu().tolist())
@@ -189,7 +203,7 @@ def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path,
                 logging.info(f'\t\t- Loss: {epoch_loss:.4f}')
 
                 # accuracy in this epoch
-                epoch_acc = 100 * running_correct.cpu().item() / len(loader.dataset)
+                epoch_acc = 100 * running_correct.to(device='cpu', dtype=torch.double).item() / len(loader.dataset)
                 history[f'{phase}_acc'].append(epoch_acc)
                 logging.info(f'\t\t- Acc: {epoch_acc:.2f}')
 
@@ -214,10 +228,13 @@ def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path,
                     # save last epoch model
                     torch.save(model.state_dict(), f'{model_path}/last_model.pt')
 
-                    if (epoch + 1) % 5 == 0:
+                    if (epoch + 1) % 2 == 0:
                         save_history(history, model_path)
+                        plot_train_curves(history, model_path)
 
                 logging.info(f'\t\t- time: {time.time() - start:.2f} s')
+
+
     return history
 
 
@@ -245,17 +262,22 @@ def plot_train_curves(curves_dict, model_path):
     plt.close()
 
 
-def train(model_name, num_epochs, model_path, local, test_run, negative_only=False, max_stale=10):
-    lr = 0.0001
+def train(model_name, num_epochs, model_path, local, test_run, continue_training=None, negative_only=False, max_stale=10):
+    lr = 0.001
     batch_size = 8
     logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}')
 
     # model
-    model, input_size = initialize_model(model_name)
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    model = model.to(device)
+    if not continue_training:
+        model, input_size = initialize_model(model_name)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = model.to(device)
+    else:
+        # todo
+        raise NotImplementedError()
+        model_path = get_model_path(model_name, local, continue_training)
+        mode_file = os.path.join(model_path, '')
+        model = None
 
     # data
     dataloaders = get_dataloaders(input_size, local, test_run, negative_only)
