@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import models, transforms
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ from pcam_dataset import PcamDataset
 
 NUM_CLASSES = 2
 
-def initialize_resnet(model_name):
+def initialize_resnet(model_name, pretrained):
     if model_name == 'resnet18':
         model_fn = models.resnet18
     elif model_name == 'resnet50':
@@ -29,7 +30,7 @@ def initialize_resnet(model_name):
     elif model_name == 'resnet152':
         model_fn = models.resnet152
 
-    model = model_fn(pretrained=True)
+    model = model_fn(pretrained=pretrained)
     in_feats = model.fc.in_features
     model.fc = nn.Linear(in_feats, NUM_CLASSES)
     input_size = 224
@@ -37,7 +38,7 @@ def initialize_resnet(model_name):
     return model, input_size
 
 
-def initialize_densenet(model_name):
+def initialize_densenet(model_name, pretrained):
     if model_name == 'densenet121':
         model_fn = models.densenet121
     elif model_name == 'densenet161':
@@ -45,7 +46,7 @@ def initialize_densenet(model_name):
     elif model_name == 'densenet201':
         model_fn = models.densenet201
 
-    model = model_fn(pretrained=True)
+    model = model_fn(pretrained=pretrained)
     in_feats = model.classifier.in_features
     model.classifier = nn.Linear(in_feats, NUM_CLASSES)
     input_size = 224
@@ -53,16 +54,16 @@ def initialize_densenet(model_name):
     return model, input_size
 
 
-def initialize_model(model_name):
-    logging.info(f'Initializing pretrained {model_name} model...')
+def initialize_model(model_name, pretrained=False):
+    logging.info(f'Initializing {model_name} model (pretrained? {pretrained}) ...')
     if 'resnet' in model_name:
-        model, input_size = initialize_resnet(model_name)
+        model, input_size = initialize_resnet(model_name, pretrained)
     if 'densenet' in model_name:
-        model, input_size = initialize_densenet(model_name)
+        model, input_size = initialize_densenet(model_name, pretrained)
     return model, input_size
 
 
-def get_dataloaders(input_size, local, test_run, negative_only=False):
+def get_dataloaders(input_size, batch_size, local, test_run=None, negative_only=False):
     images_path = '/scratch/dam740/DLM/data/images/train'
     train_labels_path = '/scratch/dam740/DLM/data/train_labels.csv'
     val_labels_path = '/scratch/dam740/DLM/data/val_labels.csv'
@@ -116,11 +117,11 @@ def get_dataloaders(input_size, local, test_run, negative_only=False):
 
     # train data loader
     train_dataset = PcamDataset(images_path, train_labels_path, train_transformations, negative_only)
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # val data loader
     val_dataset = PcamDataset(images_path, val_labels_path, val_transformations, negative_only)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return {'train': train_loader, 'val': val_loader}
 
@@ -128,7 +129,8 @@ def get_dataloaders(input_size, local, test_run, negative_only=False):
 def get_model_path(model_name, local, run_id):
     root_dir = 'models' if local else '/scratch/dam740/DLM/models'
     model_path = f'{root_dir}/{model_name}_{run_id}'
-    os.makedirs(model_path)
+    if not os.path.isdir(model_path):
+        os.makedirs(model_path)
     return model_path
 
 
@@ -188,12 +190,13 @@ def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path,
                         optimizer.step()
 
                     running_loss += loss
-                    y_predicted_probs_batch, y_predicted_batch = out.max(1)
+                    _, y_predicted_batch = out.max(1)
                     running_correct += torch.eq(y_predicted_batch, y).sum()
 
                     if phase == 'val':
                         y_true.extend(y.cpu().tolist())
-                        y_predicted_probs.extend(y_predicted_probs_batch.cpu().tolist())
+                        out_probs = F.softmax(out, dim=1)
+                        y_predicted_probs.extend(out_probs[:, 1].cpu().tolist())
 
                 logging.info(f'\t{phase}:')
 
@@ -262,15 +265,15 @@ def plot_train_curves(curves_dict, model_path):
     plt.close()
 
 
-def train(model_name, num_epochs, model_path, local, test_run, continue_training=None, negative_only=False, max_stale=10):
+def train(model_name, num_epochs, model_path, local, test_run,
+          resume_training=None, negative_only=False, max_stale=10):
     lr = 0.001
-    batch_size = 8
+    batch_size = 16
     logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}')
-
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model
-    if not continue_training:
+    if not resume_training:
         model, input_size = initialize_model(model_name)
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(device)
     else:
         # todo
@@ -280,7 +283,7 @@ def train(model_name, num_epochs, model_path, local, test_run, continue_training
         model = None
 
     # data
-    dataloaders = get_dataloaders(input_size, local, test_run, negative_only)
+    dataloaders = get_dataloaders(input_size, batch_size, local, test_run, negative_only)
 
     # optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -313,6 +316,7 @@ if __name__ == "__main__":
                         filemode='w')
     logging.info(json.dumps(args, indent=2))
     logging.info(f"Model path: {model_path}")
+
     f = train if args['kind'] == 'train' else evaluate
     args['model_path'] = model_path
     del args['kind']
