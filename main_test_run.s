@@ -12,4 +12,4 @@ module load python3/intel/3.6.3
 
 source /home/dam740/pytorch_venv/bin/activate
 
-python main.py train -m resnet50 --test-run --max-stale 100 #--negative-only
+python main.py -m resnet50 train --test-run --max-stale 100 #--negative-only

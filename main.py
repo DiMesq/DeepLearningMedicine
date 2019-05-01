@@ -144,6 +144,13 @@ def get_run_id(local):
     return str(myid)
 
 
+def load_model(model_path, model_name, run_id, device, local):
+    # todo: allow to load gpu model into cpu
+    model, input_size = initialize_model(model_name, pretrained=False)
+    model.load_state_dict(torch.load(model_path))
+    return model.to(device), input_size
+
+
 def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path, max_stale=10, negative_only=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'val_auc': []}
@@ -241,6 +248,44 @@ def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path,
     return history
 
 
+def eval_loop(model, loader, criterion, device):
+    start = time.time()
+    model.eval()
+    with torch.no_grad():
+        y_true = []
+        y_predicted_probs = []
+        running_loss = 0.0
+        running_correct = 0.0
+        for inpt, label in loader:
+            inpt = inpt.to(device)
+            label = label.to(device)
+            # forward
+            out = model(inpt)
+            # loss
+            loss = criterion(out, label)
+
+            running_loss += loss
+            _, y_predicted_batch = out.max(1)
+            running_correct += torch.eq(y_predicted_batch, label).sum()
+
+            y_true.extend(label.cpu().tolist())
+            out_probs = F.softmax(out, dim=1)
+            y_predicted_probs.extend(out_probs[:, 1].cpu().tolist())
+
+        # avg loss per batch
+        epoch_loss = (running_loss / len(loader)).cpu().item()
+        logging.info(f'\t- Loss: {epoch_loss:.4f}')
+
+        # accuracy in this epoch
+        epoch_acc = 100 * running_correct.to(device='cpu', dtype=torch.double).item() / len(loader.dataset)
+        logging.info(f'\t- Acc: {epoch_acc:.2f}')
+
+
+        epoch_auc = roc_auc_score(y_true, y_predicted_probs)
+        logging.info(f'\t- ROC-AUC: {epoch_auc:.4f}')
+        logging.info(f'\t- time: {time.time() - start:.2f} s')
+
+
 def save_history(history, model_path):
     df = pd.DataFrame(history)
     df.to_csv(f'{model_path}/history.csv', index=False)
@@ -301,16 +346,29 @@ def train(model_name, num_epochs, model_path, local, test_run,
     plot_train_curves(history, model_path)
 
 
-def evaluate(local):
+def evaluate(model_path, model_name, run_id, local):
     logging.info("Starting evaluation...")
+    batch_size = 16
+    criterion = nn.CrossEntropyLoss()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model, input_size = load_model(model_path, model_name, run_id, device, local)
+    dataloaders = get_dataloaders(input_size, batch_size, local)
+    eval_loop(model, dataloaders['val'], criterion, device)
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_id = get_run_id(args['local'])
-    log_name = f"{args['model_name']}_{run_id}.log"
-    log_path = f'/scratch/dam740/DLM/logs/{log_name}' if not args['local'] else f'logs/{log_name}'
-    model_path = get_model_path(args['model_name'], args['local'], run_id)
+    if args['kind'] == 'eval':
+        run_id = args['run_id']
+        models_path = get_model_path(args['model_name'], args['local'], run_id)
+        model_path = os.path.join(models_path, 'best_model.pt')
+        log_path = os.path.join(models_path, 'eval.log')
+    else:
+        run_id = get_run_id(args['local'])
+        model_path = get_model_path(args['model_name'], args['local'], run_id)
+        log_name = f"{args['model_name']}_{run_id}.log"
+        log_path = f'/scratch/dam740/DLM/logs/{log_name}' if not args['local'] else f'logs/{log_name}'
+    args['model_path'] = model_path
     logging.basicConfig(filename=log_path, level=logging.INFO,
                         format='%(asctime)s : %(levelname)s : %(message)s ',
                         filemode='w')
@@ -318,7 +376,6 @@ if __name__ == "__main__":
     logging.info(f"Model path: {model_path}")
 
     f = train if args['kind'] == 'train' else evaluate
-    args['model_path'] = model_path
     del args['kind']
     f(**args)
 

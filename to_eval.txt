@@ -1,0 +1,6 @@
+resnet50 9
+resnet101 9
+resnet152 8
+densenet121 6
+densenet161 4
+densenet201 5
