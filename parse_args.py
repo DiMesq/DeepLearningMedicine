@@ -14,6 +14,7 @@ def parse_args():
     parser_train.add_argument('--num-epochs', '-E', dest='num_epochs', default=100, help='Model name (for loading custom model or for transfer learning)')
     parser_train.add_argument('--max-stale', '-S', dest='max_stale', default=10, type=int, help='Early stopping: number of epochs without improvement before stopping')
     parser_train.add_argument('--negative-only', action='store_true', dest='negative_only', help='only use negative data (for debugging purposes')
+    parser_train.add_argument('--pretrained', action='store_true', help='uses transfer learning?')
 
     parser_eval = subparsers.add_parser('evaluate', help='b help')
     parser_eval.set_defaults(kind="eval")

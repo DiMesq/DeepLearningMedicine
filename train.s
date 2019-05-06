@@ -13,3 +13,4 @@ module load python3/intel/3.6.3
 source /home/dam740/pytorch_venv/bin/activate
 
 python main.py -m densenet161 train
+# python main.py -m resnet50 --test-run train

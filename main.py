@@ -20,6 +20,7 @@ from pcam_dataset import PcamDataset
 
 NUM_CLASSES = 2
 
+
 def initialize_resnet(model_name, pretrained):
     if model_name == 'resnet18':
         model_fn = models.resnet18
@@ -132,12 +133,12 @@ def get_dataloaders(input_size, batch_size, kinds=['train', 'val'], local=False,
         metadata_paths['val'] = val_labels_path
         # val data loader
         val_dataset = PcamDataset(images_path, val_labels_path, val_transformations, negative_only)
-        dataloaders['val'] = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        dataloaders['val'] = DataLoader(val_dataset, batch_size=16, shuffle=False)
 
     if 'test' in kinds:
         metadata_paths['test'] = test_labels_path
         test_dataset = PcamDataset(test_images_path, test_labels_path, val_transformations)
-        dataloaders['test'] = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        dataloaders['test'] = DataLoader(test_dataset, batch_size=8, shuffle=False)
 
     return dataloaders, metadata_paths
 
@@ -339,20 +340,22 @@ def plot_train_curves(curves_dict, model_path):
 
 
 def train(model_name, num_epochs, model_path, local, test_run,
-          resume_training=None, negative_only=False, max_stale=10):
+          resume_training=None, negative_only=False, max_stale=10,
+          pretrained=True):
     lr = 0.001
     batch_size = 16
     logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model
     if not resume_training:
-        model, input_size = initialize_model(model_name)
+        model, input_size = initialize_model(model_name, pretrained=pretrained)
         model = model.to(device)
     else:
         model, input_size = load_model(model_path, model_name, run_id, device, local)
 
     # data
-    dataloaders = get_dataloaders(input_size, batch_size, local, test_run, negative_only)
+    dataloaders, _ = get_dataloaders(input_size, batch_size, local=local,
+                                  test_run=test_run, negative_only=negative_only)
 
     # optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
