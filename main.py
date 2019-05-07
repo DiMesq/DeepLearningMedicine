@@ -6,7 +6,8 @@ import json
 from parse_args import parse_args
 import torch
 from torch.utils.data import DataLoader
-from torchvision import models, transforms
+from torchvision import transforms
+import torchvision.models
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -17,19 +18,20 @@ matplotlib.use("TkAgg")
 from matplotlib import pyplot as plt
 from sklearn.metrics import roc_auc_score
 from pcam_dataset import PcamDataset
+import models
 
 NUM_CLASSES = 2
 
 
 def initialize_resnet(model_name, pretrained):
     if model_name == 'resnet18':
-        model_fn = models.resnet18
+        model_fn = torchvision.models.resnet18
     elif model_name == 'resnet50':
-        model_fn = models.resnet50
+        model_fn = torchvision.models.resnet50
     elif model_name == 'resnet101':
-        model_fn = models.resnet101
+        model_fn = torchvision.models.resnet101
     elif model_name == 'resnet152':
-        model_fn = models.resnet152
+        model_fn = torchvision.models.resnet152
 
     model = model_fn(pretrained=pretrained)
     in_feats = model.fc.in_features
@@ -41,11 +43,11 @@ def initialize_resnet(model_name, pretrained):
 
 def initialize_densenet(model_name, pretrained):
     if model_name == 'densenet121':
-        model_fn = models.densenet121
+        model_fn = torchvision.models.densenet121
     elif model_name == 'densenet161':
-        model_fn = models.densenet161
+        model_fn = torchvision.models.densenet161
     elif model_name == 'densenet201':
-        model_fn = models.densenet201
+        model_fn = torchvision.models.densenet201
 
     model = model_fn(pretrained=pretrained)
     in_feats = model.classifier.in_features
@@ -59,9 +61,14 @@ def initialize_model(model_name, pretrained=False):
     logging.info(f'Initializing {model_name} model (pretrained? {pretrained}) ...')
     if 'resnet' in model_name:
         model, input_size = initialize_resnet(model_name, pretrained)
-    if 'densenet' in model_name:
+        batch_size = 16
+    elif 'densenet' in model_name:
         model, input_size = initialize_densenet(model_name, pretrained)
-    return model, input_size
+        batch_size = 16
+    elif 'basic' in model_name:
+        model, input_size = models.BasicCNN(), 96
+        batch_size = 50
+    return model, input_size, batch_size
 
 
 def get_dataloaders(input_size, batch_size, kinds=['train', 'val'], local=False, test_run=None, negative_only=False):
@@ -133,12 +140,12 @@ def get_dataloaders(input_size, batch_size, kinds=['train', 'val'], local=False,
         metadata_paths['val'] = val_labels_path
         # val data loader
         val_dataset = PcamDataset(images_path, val_labels_path, val_transformations, negative_only)
-        dataloaders['val'] = DataLoader(val_dataset, batch_size=16, shuffle=False)
+        dataloaders['val'] = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     if 'test' in kinds:
         metadata_paths['test'] = test_labels_path
         test_dataset = PcamDataset(test_images_path, test_labels_path, val_transformations)
-        dataloaders['test'] = DataLoader(test_dataset, batch_size=8, shuffle=False)
+        dataloaders['test'] = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     return dataloaders, metadata_paths
 
@@ -163,10 +170,10 @@ def get_run_id(local):
 
 def load_model(model_path, model_name, run_id, device, local):
     # todo: allow to load gpu model into cpu
-    model, input_size = initialize_model(model_name, pretrained=False)
+    model, input_size, batch_size = initialize_model(model_name, pretrained=False)
     weights_path = os.path.join(model_path, 'best_model.pt')
     model.load_state_dict(torch.load(weights_path))
-    return model.to(device), input_size
+    return model.to(device), input_size, batch_size
 
 
 def train_loop(model, dataloaders, optimizer, criterion, num_epochs, model_path, max_stale=10, negative_only=False):
@@ -343,16 +350,15 @@ def train(model_name, num_epochs, model_path, local, test_run,
           resume_training=None, negative_only=False, max_stale=10,
           pretrained=True):
     lr = 0.001
-    batch_size = 16
-    logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model
     if not resume_training:
-        model, input_size = initialize_model(model_name, pretrained=pretrained)
+        model, input_size, batch_size = initialize_model(model_name, pretrained=pretrained)
         model = model.to(device)
     else:
-        model, input_size = load_model(model_path, model_name, run_id, device, local)
+        model, input_size, batch_size = load_model(model_path, model_name, run_id, device, local)
 
+    logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}\n\t- max_stale: {max_stale}')
     # data
     dataloaders, _ = get_dataloaders(input_size, batch_size, local=local,
                                   test_run=test_run, negative_only=negative_only)
@@ -375,10 +381,9 @@ def train(model_name, num_epochs, model_path, local, test_run,
 
 def evaluate(model_path, model_name, run_id, evaluation_kind, local, test_run):
     logging.info("Starting evaluation...")
-    batch_size = 16
     criterion = nn.CrossEntropyLoss()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, input_size = load_model(model_path, model_name, run_id, device, local)
+    model, input_size, batch_size = load_model(model_path, model_name, run_id, device, local)
     dataloaders, metadata_paths = get_dataloaders(input_size, batch_size, [evaluation_kind], local, test_run)
     predictions_only = True if evaluation_kind == 'test' else False
     predicted_probs = eval_loop(model, dataloaders[evaluation_kind],
