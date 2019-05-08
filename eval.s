@@ -4,13 +4,14 @@
 #SBATCH --job-name=DLM_proj
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=09:00:00
-#SBATCH --mem=20GB
+#SBATCH --time=05:00:00
+#SBATCH --mem=60GB
 #SBATCH --gres=gpu:1
 
 module load python3/intel/3.6.3
 
-source /home/dam740/pytorch_venv/bin/activate
+#source /home/dam740/pytorch_venv/bin/activate
+source /scratch/dam740/DLM/pytorch/bin/activate
 
 line_number=$SLURM_ARRAY_TASK_ID
 params=$(sed -n ${line_number}p to_eval.txt)

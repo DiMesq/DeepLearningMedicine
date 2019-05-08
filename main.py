@@ -61,7 +61,7 @@ def initialize_model(model_name, pretrained=False):
     logging.info(f'Initializing {model_name} model (pretrained? {pretrained}) ...')
     if 'resnet' in model_name:
         model, input_size = initialize_resnet(model_name, pretrained)
-        batch_size = 16
+        batch_size = 25
     elif 'densenet' in model_name:
         model, input_size = initialize_densenet(model_name, pretrained)
         batch_size = 16
@@ -71,7 +71,9 @@ def initialize_model(model_name, pretrained=False):
     return model, input_size, batch_size
 
 
-def get_dataloaders(input_size, batch_size, kinds=['train', 'val'], local=False, test_run=None, negative_only=False):
+def get_dataloaders(input_size, batch_size, kinds=['train', 'val'],
+                    augmentation_level='high', local=False, test_run=None,
+                    negative_only=False):
     images_path = '/scratch/dam740/DLM/data/images/train'
     test_images_path = '/scratch/dam740/DLM/data/images/test'
     train_labels_path = '/scratch/dam740/DLM/data/train_labels.csv'
@@ -94,37 +96,52 @@ def get_dataloaders(input_size, batch_size, kinds=['train', 'val'], local=False,
     metadata_paths = {}
     if 'train' in kinds:
         metadata_paths['train'] = train_labels_path
-        train_transformations = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(input_size),
-            transforms.RandomChoice([
-                                     transforms.ColorJitter(brightness=.5),
-                                     transforms.ColorJitter(contrast=.5),
-                                     transforms.ColorJitter(saturation=.5),
-                                     transforms.ColorJitter(hue=.5),
-                                     transforms.ColorJitter(.1, .1, .1, .1),
-                                     transforms.ColorJitter(.3, .3, .3, .3),
-                                     transforms.ColorJitter(.5, .5, .5, .5),
-                                    ]),
-            transforms.RandomChoice([
-                                    transforms.RandomRotation((0, 0)),
-                                    transforms.RandomRotation((90, 90)),
-                                    transforms.RandomRotation((180, 180)),
-                                    transforms.RandomRotation((270, 270)),
-                                    transforms.RandomHorizontalFlip(p=1),
-                                    transforms.RandomVerticalFlip(p=1),
-                                    transforms.Compose([
-                                                        transforms.RandomHorizontalFlip(p=1),
-                                                        transforms.RandomRotation((90, 90))
-                                                        ]),
-                                    transforms.Compose([
-                                                        transforms.RandomHorizontalFlip(p=1),
-                                                        transforms.RandomRotation((270, 270))
-                                                        ])
+        if augmentation_level == 'high':
+            train_transformations = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Resize(input_size),
+                transforms.RandomChoice([
+                                         transforms.ColorJitter(brightness=.5),
+                                         transforms.ColorJitter(contrast=.5),
+                                         transforms.ColorJitter(saturation=.5),
+                                         transforms.ColorJitter(hue=.5),
+                                         transforms.ColorJitter(.1, .1, .1, .1),
+                                         transforms.ColorJitter(.3, .3, .3, .3),
+                                         transforms.ColorJitter(.5, .5, .5, .5),
+                                        ]),
+                transforms.RandomChoice([
+                                        transforms.RandomRotation((0, 0)),
+                                        transforms.RandomRotation((90, 90)),
+                                        transforms.RandomRotation((180, 180)),
+                                        transforms.RandomRotation((270, 270)),
+                                        transforms.RandomHorizontalFlip(p=1),
+                                        transforms.RandomVerticalFlip(p=1),
+                                        transforms.Compose([
+                                                            transforms.RandomHorizontalFlip(p=1),
+                                                            transforms.RandomRotation((90, 90))
+                                                            ]),
+                                        transforms.Compose([
+                                                            transforms.RandomHorizontalFlip(p=1),
+                                                            transforms.RandomRotation((270, 270))
+                                                            ])
 
-                                    ]),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+                                        ]),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+        else:
+            train_transformations = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Resize(input_size),
+                transforms.RandomChoice([
+                                        transforms.RandomRotation((0, 0)),
+                                        transforms.RandomRotation((90, 90)),
+                                        ]),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+
+
+        logging.info(f'Train transforms (augmentation_level={augmentation_level}): ')
+        logging.info(train_transformations)
 
         # train data loader
         train_dataset = PcamDataset(images_path, train_labels_path, train_transformations, negative_only)
@@ -346,12 +363,12 @@ def plot_train_curves(curves_dict, model_path):
     plt.close()
 
 
-def train(model_name, num_epochs, model_path, local, test_run,
+def train(model_name, num_epochs, model_path, local, test_run, augmentation_level,
           resume_training=None, negative_only=False, max_stale=10,
           pretrained=True):
     lr = 0.001
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # model
+    # mode
     if not resume_training:
         model, input_size, batch_size = initialize_model(model_name, pretrained=pretrained)
         model = model.to(device)
@@ -360,8 +377,9 @@ def train(model_name, num_epochs, model_path, local, test_run,
 
     logging.info(f'Parameters:\n\t- num_epochs: {num_epochs}\n\t- batch_size: {batch_size}\n\t- max_stale: {max_stale}')
     # data
-    dataloaders, _ = get_dataloaders(input_size, batch_size, local=local,
-                                  test_run=test_run, negative_only=negative_only)
+    dataloaders, _ = get_dataloaders(input_size, batch_size,
+                                     augmentation_level=augmentation_level, local=local,
+                                     test_run=test_run, negative_only=negative_only)
 
     # optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -384,7 +402,9 @@ def evaluate(model_path, model_name, run_id, evaluation_kind, local, test_run):
     criterion = nn.CrossEntropyLoss()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model, input_size, batch_size = load_model(model_path, model_name, run_id, device, local)
-    dataloaders, metadata_paths = get_dataloaders(input_size, batch_size, [evaluation_kind], local, test_run)
+    dataloaders, metadata_paths = get_dataloaders(input_size, batch_size,
+                                                  [evaluation_kind],
+                                                  local=local, test_run=test_run)
     predictions_only = True if evaluation_kind == 'test' else False
     predicted_probs = eval_loop(model, dataloaders[evaluation_kind],
                                 predictions_only=predictions_only,
@@ -396,10 +416,12 @@ def evaluate(model_path, model_name, run_id, evaluation_kind, local, test_run):
 
 if __name__ == "__main__":
     args = parse_args()
-    if args['kind'] == 'eval':
-        run_id = args['run_id']
+    if args['kind'] == 'eval' or (args['kind'] == 'train' and args['resume_training']):
+        is_eval = args['kind'] == 'eval'
+        run_id = args['run_id'] if is_eval else args['resume_training']
         model_path = get_model_path(args['model_name'], args['local'], run_id)
-        log_path = os.path.join(model_path, 'eval.log')
+        log_file = 'eval.log' if is_eval else 'resume_train.log'
+        log_path = os.path.join(model_path, log_file)
     else:
         run_id = get_run_id(args['local'])
         model_path = get_model_path(args['model_name'], args['local'], run_id)

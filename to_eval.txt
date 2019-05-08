@@ -1,6 +1,1 @@
-resnet50 9 test
-resnet101 9 test
-resnet152 8 test
-densenet121 6 test
-densenet161 4 test
-densenet201 5 test
+basic 13 test

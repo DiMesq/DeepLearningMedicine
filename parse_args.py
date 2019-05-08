@@ -15,6 +15,9 @@ def parse_args():
     parser_train.add_argument('--max-stale', '-S', dest='max_stale', default=10, type=int, help='Early stopping: number of epochs without improvement before stopping')
     parser_train.add_argument('--negative-only', action='store_true', dest='negative_only', help='only use negative data (for debugging purposes')
     parser_train.add_argument('--pretrained', action='store_true', help='uses transfer learning?')
+    parser_train.add_argument('--augmentation-level', '-A', dest='augmentation_level',
+                              choices=['high', 'low'], default='high',
+                              help="Amount of data augmentations to use during training")
 
     parser_eval = subparsers.add_parser('evaluate', help='b help')
     parser_eval.set_defaults(kind="eval")
